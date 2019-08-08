@@ -240,203 +240,350 @@ uint32_t *bank0_ptr = (uint32_t *) malloc(ram_size0);
 
 uint8_t clk_cnt = 0;
 
-
 double sc_time_stamp () {	// Called by $time in Verilog.
 	return main_time;
 }
 
 
+ImVector<char*>       Items;
+static char* Strdup(const char *str) { size_t len = strlen(str) + 1; void* buf = malloc(len); IM_ASSERT(buf); return (char*)memcpy(buf, (const void*)str, len); }
+
+void    AddLog(const char* fmt, ...) IM_FMTARGS(2)
+{
+	// FIXME-OPT
+	char buf[1024];
+	va_list args;
+	va_start(args, fmt);
+	vsnprintf(buf, IM_ARRAYSIZE(buf), fmt, args);
+	buf[IM_ARRAYSIZE(buf) - 1] = 0;
+	va_end(args);
+	Items.push_back(Strdup(buf));
+}
+
+// Demonstrate creating a simple console window, with scrolling, filtering, completion and history.
+// For the console example, here we are using a more C++ like approach of declaring a class to hold the data and the functions.
+struct ExampleAppConsole
+{
+	char                  InputBuf[256];
+	ImVector<const char*> Commands;
+	ImVector<char*>       History;
+	int                   HistoryPos;    // -1: new line, 0..History.Size-1 browsing history.
+	ImGuiTextFilter       Filter;
+	bool                  AutoScroll;
+	bool                  ScrollToBottom;
+
+	ExampleAppConsole()
+	{
+		ClearLog();
+		memset(InputBuf, 0, sizeof(InputBuf));
+		HistoryPos = -1;
+		Commands.push_back("HELP");
+		Commands.push_back("HISTORY");
+		Commands.push_back("CLEAR");
+		Commands.push_back("CLASSIFY");  // "classify" is only here to provide an example of "C"+[tab] completing to "CL" and displaying matches.
+		AutoScroll = true;
+		ScrollToBottom = false;
+		AddLog("Start of sim");
+	}
+	~ExampleAppConsole()
+	{
+		ClearLog();
+		for (int i = 0; i < History.Size; i++)
+			free(History[i]);
+	}
+
+	// Portable helpers
+	static int   Stricmp(const char* str1, const char* str2) { int d; while ((d = toupper(*str2) - toupper(*str1)) == 0 && *str1) { str1++; str2++; } return d; }
+	static int   Strnicmp(const char* str1, const char* str2, int n) { int d = 0; while (n > 0 && (d = toupper(*str2) - toupper(*str1)) == 0 && *str1) { str1++; str2++; n--; } return d; }
+//	static char* Strdup(const char *str) { size_t len = strlen(str) + 1; void* buf = malloc(len); IM_ASSERT(buf); return (char*)memcpy(buf, (const void*)str, len); }
+	static void  Strtrim(char* str) { char* str_end = str + strlen(str); while (str_end > str && str_end[-1] == ' ') str_end--; *str_end = 0; }
+
+	void    ClearLog()
+	{
+		for (int i = 0; i < Items.Size; i++)
+			free(Items[i]);
+		Items.clear();
+	}
+
 /*
-void get_opcode_string(uint32_t inst) {
-
-	uint32_t opcode			= (inst&0xFC000000)>>26;
-	uint32_t rs				= (inst&0x03E00000)>>21;
-	uint32_t rt				= (inst&0x001F0000)>>16;
-	uint32_t rd				= (inst&0x0000F800)>>11;
-	uint32_t funct			= (inst&0x0000003F)>>0;
-	uint32_t immediate		= (inst&0x0000FFFF)>>0;
-	uint32_t jumpaddress	= (inst&0x03FFFFFF)>>0;
-	uint32_t cp0_sel		= (inst&0x00000007)>>0;
-
-
-uint8_t Funct_Add     = 0b100000;
-parameter [5:0] Funct_Addu    = 0b100001;
-parameter [5:0] Funct_And     = 0b100100;
-parameter [5:0] Funct_Break   = 0b001101;
-parameter [5:0] Funct_Clo     = 0b100001; // same as Addu
-parameter [5:0] Funct_Clz     = 0b100000; // same as Add
-parameter [5:0] Funct_Div     = 0b011010;
-parameter [5:0] Funct_Divu    = 0b011011;
-parameter [5:0] Funct_Jr      = 0b001000;
-parameter [5:0] Funct_Jalr    = 0b001001;
-parameter [5:0] Funct_Madd    = 0b000000;
-parameter [5:0] Funct_Maddu   = 0b000001;
-parameter [5:0] Funct_Mfhi    = 0b010000;
-parameter [5:0] Funct_Mflo    = 0b010010;
-parameter [5:0] Funct_Movn    = 0b001011;
-parameter [5:0] Funct_Movz    = 0b001010;
-parameter [5:0] Funct_Msub    = 0b000100; // same as Sllv
-parameter [5:0] Funct_Msubu   = 0b000101;
-parameter [5:0] Funct_Mthi    = 0b010001;
-parameter [5:0] Funct_Mtlo    = 0b010011;
-parameter [5:0] Funct_Mul     = 0b000010; // same as Srl
-parameter [5:0] Funct_Mult    = 0b011000;
-parameter [5:0] Funct_Multu   = 0b011001;
-parameter [5:0] Funct_Nor     = 0b100111;
-parameter [5:0] Funct_Or      = 0b100101;
-parameter [5:0] Funct_Sll     = 0b000000;
-parameter [5:0] Funct_Sllv    = 0b000100;
-parameter [5:0] Funct_Slt     = 0b101010;
-parameter [5:0] Funct_Sltu    = 0b101011;
-parameter [5:0] Funct_Sra     = 0b000011;
-parameter [5:0] Funct_Srav    = 0b000111;
-parameter [5:0] Funct_Srl     = 0b000010;
-parameter [5:0] Funct_Srlv    = 0b000110;
-parameter [5:0] Funct_Sub     = 0b100010;
-parameter [5:0] Funct_Subu    = 0b100011;
-parameter [5:0] Funct_Syscall = 0b001100;
-parameter [5:0] Funct_Teq     = 0b110100;
-parameter [5:0] Funct_Tge     = 0b110000;
-parameter [5:0] Funct_Tgeu    = 0b110001;
-parameter [5:0] Funct_Tlt     = 0b110010;
-parameter [5:0] Funct_Tltu    = 0b110011;
-parameter [5:0] Funct_Tne     = 0b110110;
-parameter [5:0] Funct_Xor     = 0b100110;
-
-            case (OpCode)
-                // R-Type
-                Op_Type_R  :
-                    begin
-                        case (Funct)
-                            Funct_Add     : Datapath <= DP_Add;
-                            Funct_Addu    : Datapath <= DP_Addu;
-                            Funct_And     : Datapath <= DP_And;
-                            Funct_Break   : Datapath <= DP_Break;
-                            Funct_Div     : Datapath <= DP_Div;
-                            Funct_Divu    : Datapath <= DP_Divu;
-                            Funct_Jalr    : Datapath <= DP_Jalr;
-                            Funct_Jr      : Datapath <= DP_Jr;
-                            Funct_Mfhi    : Datapath <= DP_Mfhi;
-                            Funct_Mflo    : Datapath <= DP_Mflo;
-                            Funct_Movn    : Datapath <= DP_Movn;
-                            Funct_Movz    : Datapath <= DP_Movz;
-                            Funct_Mthi    : Datapath <= DP_Mthi;
-                            Funct_Mtlo    : Datapath <= DP_Mtlo;
-                            Funct_Mult    : Datapath <= DP_Mult;
-                            Funct_Multu   : Datapath <= DP_Multu;
-                            Funct_Nor     : Datapath <= DP_Nor;
-                            Funct_Or      : Datapath <= DP_Or;
-                            Funct_Sll     : Datapath <= DP_Sll;
-                            Funct_Sllv    : Datapath <= DP_Sllv;
-                            Funct_Slt     : Datapath <= DP_Slt;
-                            Funct_Sltu    : Datapath <= DP_Sltu;
-                            Funct_Sra     : Datapath <= DP_Sra;
-                            Funct_Srav    : Datapath <= DP_Srav;
-                            Funct_Srl     : Datapath <= DP_Srl;
-                            Funct_Srlv    : Datapath <= DP_Srlv;
-                            Funct_Sub     : Datapath <= DP_Sub;
-                            Funct_Subu    : Datapath <= DP_Subu;
-                            Funct_Syscall : Datapath <= DP_Syscall;
-                            Funct_Teq     : Datapath <= DP_Teq;
-                            Funct_Tge     : Datapath <= DP_Tge;
-                            Funct_Tgeu    : Datapath <= DP_Tgeu;
-                            Funct_Tlt     : Datapath <= DP_Tlt;
-                            Funct_Tltu    : Datapath <= DP_Tltu;
-                            Funct_Tne     : Datapath <= DP_Tne;
-                            Funct_Xor     : Datapath <= DP_Xor;
-                            default       : Datapath <= DP_None;
-                        endcase
-                    end
-                // R2-Type
-                Op_Type_R2 :
-                    begin
-                        case (Funct)
-                            Funct_Clo   : Datapath <= DP_Clo;
-                            Funct_Clz   : Datapath <= DP_Clz;
-                            Funct_Madd  : Datapath <= DP_Madd;
-                            Funct_Maddu : Datapath <= DP_Maddu;
-                            Funct_Msub  : Datapath <= DP_Msub;
-                            Funct_Msubu : Datapath <= DP_Msubu;
-                            Funct_Mul   : Datapath <= DP_Mul;
-                            default     : Datapath <= DP_None;
-                        endcase
-                    end
-                // I-Type
-                Op_Addi    : Datapath <= DP_Addi;
-                Op_Addiu   : Datapath <= DP_Addiu;
-                Op_Andi    : Datapath <= DP_Andi;
-                Op_Ori     : Datapath <= DP_Ori;
-                Op_Pref    : Datapath <= DP_Pref;
-                Op_Slti    : Datapath <= DP_Slti;
-                Op_Sltiu   : Datapath <= DP_Sltiu;
-                Op_Xori    : Datapath <= DP_Xori;
-                // Jumps (using immediates)
-                Op_J       : Datapath <= DP_J;
-                Op_Jal     : Datapath <= DP_Jal;
-                // Branches and Traps
-                Op_Type_BI :
-                    begin
-                        case (Rt)
-                            OpRt_Bgez   : Datapath <= DP_Bgez;
-                            OpRt_Bgezal : Datapath <= DP_Bgezal;
-                            OpRt_Bltz   : Datapath <= DP_Bltz;
-                            OpRt_Bltzal : Datapath <= DP_Bltzal;
-                            OpRt_Teqi   : Datapath <= DP_Teqi;
-                            OpRt_Tgei   : Datapath <= DP_Tgei;
-                            OpRt_Tgeiu  : Datapath <= DP_Tgeiu;
-                            OpRt_Tlti   : Datapath <= DP_Tlti;
-                            OpRt_Tltiu  : Datapath <= DP_Tltiu;
-                            OpRt_Tnei   : Datapath <= DP_Tnei;
-                            default     : Datapath <= DP_None;
-                        endcase
-                    end                         
-                Op_Beq     : Datapath <= DP_Beq;
-                Op_Bgtz    : Datapath <= DP_Bgtz;
-                Op_Blez    : Datapath <= DP_Blez;
-                Op_Bne     : Datapath <= DP_Bne;
-                // Coprocessor 0
-                Op_Type_CP0 :
-                    begin
-                        case (Rs)
-                            OpRs_MF   : Datapath <= DP_Mfc0;
-                            OpRs_MT   : Datapath <= DP_Mtc0;
-                            OpRs_ERET : Datapath <= (Funct == Funct_ERET) ? DP_Eret : DP_None;
-                            default   : Datapath <= DP_None;
-                        endcase
-                    end
-                // Coprocessor 2
-                Op_Type_CP2 :
-                    begin
-                        case (Rs)
-                            OpRs_CF   : Datapath <= DP_Cfc2;
-                            OpRs_CT   : Datapath <= DP_Ctc2;
-                            OpRs_MF   : Datapath <= DP_Mfc2;
-                            OpRs_MT   : Datapath <= DP_Mtc2;
-                            default   : Datapath <= DP_None;
-                        endcase
-                    end
-                // Memory
-                Op_Lb   : Datapath <= DP_Lb;
-                Op_Lbu  : Datapath <= DP_Lbu;
-                Op_Lh   : Datapath <= DP_Lh;
-                Op_Lhu  : Datapath <= DP_Lhu;
-                Op_Ll   : Datapath <= DP_Ll;
-                Op_Lui  : Datapath <= DP_Lui;
-                Op_Lw   : Datapath <= DP_Lw;
-                Op_Lwc2 : Datapath <= DP_Lwc2;
-                Op_Lwl  : Datapath <= DP_Lwl;
-                Op_Lwr  : Datapath <= DP_Lwr;
-                Op_Sb   : Datapath <= DP_Sb;
-                Op_Sc   : Datapath <= DP_Sc;
-                Op_Sh   : Datapath <= DP_Sh;
-                Op_Sw   : Datapath <= DP_Sw;
-                Op_Swc2 : Datapath <= DP_Swc2;
-                Op_Swl  : Datapath <= DP_Swl;
-                Op_Swr  : Datapath <= DP_Swr;
-                default : Datapath <= DP_None;
-            endcase
-);
+	void    AddLog(const char* fmt, ...) IM_FMTARGS(2)
+	{
+		// FIXME-OPT
+		char buf[1024];
+		va_list args;
+		va_start(args, fmt);
+		vsnprintf(buf, IM_ARRAYSIZE(buf), fmt, args);
+		buf[IM_ARRAYSIZE(buf) - 1] = 0;
+		va_end(args);
+		Items.push_back(Strdup(buf));
+	}
 */
+
+	void    Draw(const char* title, bool* p_open)
+	{
+		ImGui::SetNextWindowSize(ImVec2(520, 600), ImGuiCond_FirstUseEver);
+		if (!ImGui::Begin(title, p_open))
+		{
+			ImGui::End();
+			return;
+		}
+
+		// As a specific feature guaranteed by the library, after calling Begin() the last Item represent the title bar. So e.g. IsItemHovered() will return true when hovering the title bar.
+		// Here we create a context menu only available from the title bar.
+		if (ImGui::BeginPopupContextItem())
+		{
+			if (ImGui::MenuItem("Close Console"))
+				*p_open = false;
+			ImGui::EndPopup();
+		}
+
+		//ImGui::TextWrapped("This example implements a console with basic coloring, completion and history. A more elaborate implementation may want to store entries along with extra data such as timestamp, emitter, etc.");
+		//ImGui::TextWrapped("Enter 'HELP' for help, press TAB to use text completion.");
+
+		// TODO: display items starting from the bottom
+
+		//if (ImGui::SmallButton("Add Dummy Text")) { AddLog("%d some text", Items.Size); AddLog("some more text"); AddLog("display very important message here!"); } ImGui::SameLine();
+		//if (ImGui::SmallButton("Add Dummy Error")) { AddLog("[error] something went wrong"); } ImGui::SameLine();
+		if (ImGui::SmallButton("Clear")) { ClearLog(); } ImGui::SameLine();
+		bool copy_to_clipboard = ImGui::SmallButton("Copy");
+		//static float t = 0.0f; if (ImGui::GetTime() - t > 0.02f) { t = ImGui::GetTime(); AddLog("Spam %f", t); }
+
+		ImGui::Separator();
+
+		// Options menu
+		if (ImGui::BeginPopup("Options"))
+		{
+			ImGui::Checkbox("Auto-scroll", &AutoScroll);
+			ImGui::EndPopup();
+		}
+
+		// Options, Filter
+		if (ImGui::Button("Options"))
+			ImGui::OpenPopup("Options");
+		ImGui::SameLine();
+		Filter.Draw("Filter (\"incl,-excl\") (\"error\")", 180);
+		ImGui::Separator();
+
+		const float footer_height_to_reserve = ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing(); // 1 separator, 1 input text
+		ImGui::BeginChild("ScrollingRegion", ImVec2(0, -footer_height_to_reserve), false, ImGuiWindowFlags_HorizontalScrollbar); // Leave room for 1 separator + 1 InputText
+		if (ImGui::BeginPopupContextWindow())
+		{
+			if (ImGui::Selectable("Clear")) ClearLog();
+			ImGui::EndPopup();
+		}
+
+		// Display every line as a separate entry so we can change their color or add custom widgets. If you only want raw text you can use ImGui::TextUnformatted(log.begin(), log.end());
+		// NB- if you have thousands of entries this approach may be too inefficient and may require user-side clipping to only process visible items.
+		// You can seek and display only the lines that are visible using the ImGuiListClipper helper, if your elements are evenly spaced and you have cheap random access to the elements.
+		// To use the clipper we could replace the 'for (int i = 0; i < Items.Size; i++)' loop with:
+		//     ImGuiListClipper clipper(Items.Size);
+		//     while (clipper.Step())
+		//         for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++)
+		// However, note that you can not use this code as is if a filter is active because it breaks the 'cheap random-access' property. We would need random-access on the post-filtered list.
+		// A typical application wanting coarse clipping and filtering may want to pre-compute an array of indices that passed the filtering test, recomputing this array when user changes the filter,
+		// and appending newly elements as they are inserted. This is left as a task to the user until we can manage to improve this example code!
+		// If your items are of variable size you may want to implement code similar to what ImGuiListClipper does. Or split your data into fixed height items to allow random-seeking into your list.
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 1)); // Tighten spacing
+		if (copy_to_clipboard)
+			ImGui::LogToClipboard();
+		for (int i = 0; i < Items.Size; i++)
+		{
+			const char* item = Items[i];
+			if (!Filter.PassFilter(item))
+				continue;
+
+			// Normally you would store more information in your item (e.g. make Items[] an array of structure, store color/type etc.)
+			bool pop_color = false;
+			if (strstr(item, "[error]")) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f)); pop_color = true; }
+			else if (strncmp(item, "# ", 2) == 0) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.6f, 1.0f)); pop_color = true; }
+			ImGui::TextUnformatted(item);
+			if (pop_color)
+				ImGui::PopStyleColor();
+		}
+		if (copy_to_clipboard)
+			ImGui::LogFinish();
+
+		if (ScrollToBottom || (AutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()))
+			ImGui::SetScrollHereY(1.0f);
+		ScrollToBottom = false;
+
+		ImGui::PopStyleVar();
+		ImGui::EndChild();
+		ImGui::Separator();
+
+		// Command-line
+		bool reclaim_focus = false;
+		if (ImGui::InputText("Input", InputBuf, IM_ARRAYSIZE(InputBuf), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackCompletion | ImGuiInputTextFlags_CallbackHistory, &TextEditCallbackStub, (void*)this))
+		{
+			char* s = InputBuf;
+			Strtrim(s);
+			if (s[0])
+				ExecCommand(s);
+			strcpy(s, "");
+			reclaim_focus = true;
+		}
+
+		// Auto-focus on window apparition
+		ImGui::SetItemDefaultFocus();
+		if (reclaim_focus)
+			ImGui::SetKeyboardFocusHere(-1); // Auto focus previous widget
+
+		ImGui::End();
+	}
+
+	void    ExecCommand(const char* command_line)
+	{
+		AddLog("# %s\n", command_line);
+
+		// Insert into history. First find match and delete it so it can be pushed to the back. This isn't trying to be smart or optimal.
+		HistoryPos = -1;
+		for (int i = History.Size - 1; i >= 0; i--)
+			if (Stricmp(History[i], command_line) == 0)
+			{
+				free(History[i]);
+				History.erase(History.begin() + i);
+				break;
+			}
+		History.push_back(Strdup(command_line));
+
+		// Process command
+		if (Stricmp(command_line, "CLEAR") == 0)
+		{
+			ClearLog();
+		}
+		else if (Stricmp(command_line, "HELP") == 0)
+		{
+			AddLog("Commands:");
+			for (int i = 0; i < Commands.Size; i++)
+				AddLog("- %s", Commands[i]);
+		}
+		else if (Stricmp(command_line, "HISTORY") == 0)
+		{
+			int first = History.Size - 10;
+			for (int i = first > 0 ? first : 0; i < History.Size; i++)
+				AddLog("%3d: %s\n", i, History[i]);
+		}
+		else
+		{
+			AddLog("Unknown command: '%s'\n", command_line);
+		}
+
+		// On commad input, we scroll to bottom even if AutoScroll==false
+		ScrollToBottom = true;
+	}
+
+	static int TextEditCallbackStub(ImGuiInputTextCallbackData* data) // In C++11 you are better off using lambdas for this sort of forwarding callbacks
+	{
+		ExampleAppConsole* console = (ExampleAppConsole*)data->UserData;
+		return console->TextEditCallback(data);
+	}
+
+	int     TextEditCallback(ImGuiInputTextCallbackData* data)
+	{
+		//AddLog("cursor: %d, selection: %d-%d", data->CursorPos, data->SelectionStart, data->SelectionEnd);
+		switch (data->EventFlag)
+		{
+		case ImGuiInputTextFlags_CallbackCompletion:
+		{
+			// Example of TEXT COMPLETION
+
+			// Locate beginning of current word
+			const char* word_end = data->Buf + data->CursorPos;
+			const char* word_start = word_end;
+			while (word_start > data->Buf)
+			{
+				const char c = word_start[-1];
+				if (c == ' ' || c == '\t' || c == ',' || c == ';')
+					break;
+				word_start--;
+			}
+
+			// Build a list of candidates
+			ImVector<const char*> candidates;
+			for (int i = 0; i < Commands.Size; i++)
+				if (Strnicmp(Commands[i], word_start, (int)(word_end - word_start)) == 0)
+					candidates.push_back(Commands[i]);
+
+			if (candidates.Size == 0)
+			{
+				// No match
+				AddLog("No match for \"%.*s\"!\n", (int)(word_end - word_start), word_start);
+			}
+			else if (candidates.Size == 1)
+			{
+				// Single match. Delete the beginning of the word and replace it entirely so we've got nice casing
+				data->DeleteChars((int)(word_start - data->Buf), (int)(word_end - word_start));
+				data->InsertChars(data->CursorPos, candidates[0]);
+				data->InsertChars(data->CursorPos, " ");
+			}
+			else
+			{
+				// Multiple matches. Complete as much as we can, so inputing "C" will complete to "CL" and display "CLEAR" and "CLASSIFY"
+				int match_len = (int)(word_end - word_start);
+				for (;;)
+				{
+					int c = 0;
+					bool all_candidates_matches = true;
+					for (int i = 0; i < candidates.Size && all_candidates_matches; i++)
+						if (i == 0)
+							c = toupper(candidates[i][match_len]);
+						else if (c == 0 || c != toupper(candidates[i][match_len]))
+							all_candidates_matches = false;
+					if (!all_candidates_matches)
+						break;
+					match_len++;
+				}
+
+				if (match_len > 0)
+				{
+					data->DeleteChars((int)(word_start - data->Buf), (int)(word_end - word_start));
+					data->InsertChars(data->CursorPos, candidates[0], candidates[0] + match_len);
+				}
+
+				// List matches
+				AddLog("Possible matches:\n");
+				for (int i = 0; i < candidates.Size; i++)
+					AddLog("- %s\n", candidates[i]);
+			}
+
+			break;
+		}
+		case ImGuiInputTextFlags_CallbackHistory:
+		{
+			// Example of HISTORY
+			const int prev_history_pos = HistoryPos;
+			if (data->EventKey == ImGuiKey_UpArrow)
+			{
+				if (HistoryPos == -1)
+					HistoryPos = History.Size - 1;
+				else if (HistoryPos > 0)
+					HistoryPos--;
+			}
+			else if (data->EventKey == ImGuiKey_DownArrow)
+			{
+				if (HistoryPos != -1)
+					if (++HistoryPos >= History.Size)
+						HistoryPos = -1;
+			}
+
+			// A better implementation would preserve the data on the current input line along with cursor position.
+			if (prev_history_pos != HistoryPos)
+			{
+				const char* history_str = (HistoryPos >= 0) ? History[HistoryPos] : "";
+				data->DeleteChars(0, data->BufTextLen);
+				data->InsertChars(0, history_str);
+			}
+		}
+		}
+		return 0;
+	}
+};
+
+static void ShowExampleAppConsole(bool* p_open)
+{
+	static ExampleAppConsole console;
+	console.Draw("Debug Log", p_open);
+}
 
 int verilate() {
 	if (!Verilated::gotFinish()) {
@@ -636,30 +783,31 @@ int verilate() {
 			}
 			*/
 
-			
+			char my_string[1024];
 			old_pc = top->gba_top__DOT__cpu__DOT__cpu__DOT__RegFile_PCOut;
 
 			if (top->bus_io_reg_read /*&& top->bus_mem_addr != old_hw_addr*/) {
 				unsigned int my_data;
 				
 				if (top->gba_top__DOT__cpu__DOT__cpu__DOT__WRITE) {
-					printf("WRITE to IO  0x%08X  ", top->bus_mem_addr);
+					//printf("WRITE to IO  0x%08X  ", top->bus_mem_addr);
+					sprintf(my_string, "WRITE to IO  0x%08X  ", top->bus_mem_addr); AddLog(my_string);
 					my_data = top->gba_top__DOT__cpu__DOT__cpu__DOT__WDATA;
-
 				}
 				else {
-					printf("READ from IO 0x%08X  ", top->bus_mem_addr);
+					//printf("READ from IO 0x%08X  ", top->bus_mem_addr);
+					sprintf(my_string, "READ from IO 0x%08X  ", top->bus_mem_addr); AddLog(my_string);
 					my_data = top->gba_top__DOT__cpu__DOT__cpu__DOT__RDATA;
 				}
 				
 				switch (top->bus_mem_addr) {
-					case 0x04000208: printf("IME:     (PC=0x%08X) (data=0x%08X)\n", top->gba_top__DOT__cpu__DOT__cpu__DOT__RegFile_PCOut, my_data); break;
-					case 0x04000300: printf("POSTFLG: (PC=0x%08X) (data=0x%08X)\n", top->gba_top__DOT__cpu__DOT__cpu__DOT__RegFile_PCOut, my_data); break;
-
-					default:         printf("         (PC=0x%08X) (data=0x%08X)\n", top->gba_top__DOT__cpu__DOT__cpu__DOT__RegFile_PCOut, my_data); break;
+					case 0x04000208: sprintf(my_string, "IME:     (PC=0x%08X) (data=0x%08X)\n", top->gba_top__DOT__cpu__DOT__cpu__DOT__RegFile_PCOut, my_data); AddLog(my_string); break;
+					case 0x04000300: sprintf(my_string, "POSTFLG: (PC=0x%08X) (data=0x%08X)\n", top->gba_top__DOT__cpu__DOT__cpu__DOT__RegFile_PCOut, my_data); AddLog(my_string); break;
+					default:         sprintf(my_string, "         (PC=0x%08X) (data=0x%08X)\n", top->gba_top__DOT__cpu__DOT__cpu__DOT__RegFile_PCOut, my_data); AddLog(my_string); break;
 				}
 
-				printf("bus_addr_lat1=0x%08X\n", top->gba_top__DOT__mem__DOT__bus_addr_lat1);
+				//printf("bus_addr_lat1=0x%08X\n", top->gba_top__DOT__mem__DOT__bus_addr_lat1);
+				sprintf(my_string, "bus_addr_lat1=0x%08X\n", top->gba_top__DOT__mem__DOT__bus_addr_lat1); AddLog(my_string);
 			}
 
 			//if (top->bus_io_reg_read) old_hw_addr = top->bus_mem_addr;
@@ -1156,14 +1304,10 @@ int main(int argc, char** argv, char** env) {
 		ImGui::Text("nFIQ:    %d", top->gba_top__DOT__cpu__DOT__cpu__DOT__nFIQ);
 		ImGui::Text("write:   %d", top->gba_top__DOT__cpu__DOT__cpu__DOT__WRITE);
 		ImGui::Text("abort:   %d", top->gba_top__DOT__cpu__DOT__cpu__DOT__ABORT);
-
-
-		ImGui::Begin("Control Logic");
 		ImGui::Spacing();
 		ImGui::Text("IDC_B:    %d", top->gba_top__DOT__cpu__DOT__cpu__DOT__controllogic_Inst__DOT__IDC_B);
 		ImGui::Text("IDC_BL:   %d", top->gba_top__DOT__cpu__DOT__cpu__DOT__controllogic_Inst__DOT__IDC_BL);
 		ImGui::Text("IDC_BX:   %d", top->gba_top__DOT__cpu__DOT__cpu__DOT__controllogic_Inst__DOT__IDC_BX);
-		ImGui::End();
 
 		/*
 		ImGui::Text("at:   0x%08X", top->gba_top__DOT);
@@ -1408,6 +1552,9 @@ int main(int argc, char** argv, char** env) {
 		*/
 
 		//void ui_m6502_draw(ui_m6502_t* win);
+
+		static bool show_app_console = true;
+		ShowExampleAppConsole(&show_app_console);
 
 		// 3. Show another simple window.
 		/*
