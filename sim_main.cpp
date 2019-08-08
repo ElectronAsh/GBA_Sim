@@ -46,8 +46,10 @@ static int                      g_VertexBufferSize = 5000, g_IndexBufferSize = 1
 // Instantiation of module.
 Vgba_top* top = new Vgba_top;
 
-char my_string[400];
+char my_string[1024];
 int str_i = 0;
+
+unsigned int file_size;
 
 unsigned int row;
 unsigned int col;
@@ -196,12 +198,7 @@ static float values[90] = { 0 };
 static int values_offset = 0;
 
 
-
-
-
 vluint64_t main_time = 0;	// Current simulation time.
-
-unsigned int file_size;
 
 unsigned char buffer[16];
 
@@ -232,6 +229,9 @@ uint32_t exe_size = 1024 * 512 * 4;			// 2MB. (32-bit wide).
 uint32_t *exe_ptr = (uint32_t *) malloc(exe_size);
 
 uint32_t first_cmd_word = 0;
+
+bool bios_rom_loaded = 0;
+bool cart_rom_loaded = 0;
 
 /*
 unsigned int ram_size0 = 1024*1024*8;	// 32MB. (32-bit wide).
@@ -283,7 +283,8 @@ struct ExampleAppConsole
 		Commands.push_back("CLASSIFY");  // "classify" is only here to provide an example of "C"+[tab] completing to "CL" and displaying matches.
 		AutoScroll = true;
 		ScrollToBottom = false;
-		AddLog("Start of sim");
+		AddLog("GBA Core Sim start");
+		AddLog("");
 	}
 	~ExampleAppConsole()
 	{
@@ -783,19 +784,16 @@ int verilate() {
 			}
 			*/
 
-			char my_string[1024];
 			old_pc = top->gba_top__DOT__cpu__DOT__cpu__DOT__RegFile_PCOut;
 
 			if (top->bus_io_reg_read /*&& top->bus_mem_addr != old_hw_addr*/) {
 				unsigned int my_data;
 				
 				if (top->gba_top__DOT__cpu__DOT__cpu__DOT__WRITE) {
-					//printf("WRITE to IO  0x%08X  ", top->bus_mem_addr);
 					sprintf(my_string, "WRITE to IO  0x%08X  ", top->bus_mem_addr); AddLog(my_string);
 					my_data = top->gba_top__DOT__cpu__DOT__cpu__DOT__WDATA;
 				}
 				else {
-					//printf("READ from IO 0x%08X  ", top->bus_mem_addr);
 					sprintf(my_string, "READ from IO 0x%08X  ", top->bus_mem_addr); AddLog(my_string);
 					my_data = top->gba_top__DOT__cpu__DOT__cpu__DOT__RDATA;
 				}
@@ -806,7 +804,6 @@ int verilate() {
 					default:         sprintf(my_string, "         (PC=0x%08X) (data=0x%08X)\n", top->gba_top__DOT__cpu__DOT__cpu__DOT__RegFile_PCOut, my_data); AddLog(my_string); break;
 				}
 
-				//printf("bus_addr_lat1=0x%08X\n", top->gba_top__DOT__mem__DOT__bus_addr_lat1);
 				sprintf(my_string, "bus_addr_lat1=0x%08X\n", top->gba_top__DOT__mem__DOT__bus_addr_lat1); AddLog(my_string);
 			}
 
@@ -879,7 +876,7 @@ int verilate() {
 			if (prev_vsync && !top->VGA_VS) {
 				frame_count++;
 				line_count = 0;
-				printf("Frame: %06d  VSync! ", frame_count);
+				sprintf(my_string, "Frame: %06d  VSync! ", frame_count); AddLog(my_string);
 				
 				//if (frame_count > 46) {
 					printf("Dumping framebuffer to vga_out.raw!\n");
@@ -887,10 +884,10 @@ int verilate() {
 					sprintf(vga_filename, "vga_frame_%d.raw", frame_count);
 					vgap = fopen(vga_filename, "w");
 					if (vgap != NULL) {
-						printf("\nOpened %s for writing OK.\n", vga_filename);
+						sprintf(my_string, "\nOpened %s for writing OK.\n", vga_filename); AddLog(my_string);
 					}
 					else {
-						printf("\nCould not open %s for writing!\n\n", vga_filename);
+						sprintf(my_string, "\nCould not open %s for writing!\n\n", vga_filename); AddLog(my_string);
 						return 0;
 					};
 					fseek(vgap, 0L, SEEK_SET);
@@ -1013,32 +1010,8 @@ int main(int argc, char** argv, char** env) {
 	};
 	*/
 	
-	unsigned int file_size;
-
-	FILE *biosfile;
-	const char* bios_filename = "gbabios.bin";
-	biosfile = fopen(bios_filename,"r");
-	
-	if (biosfile!=NULL) printf("\GBA BIOS %s loaded OK.\n\n", bios_filename);
-	else { printf("\GBA BIOS file not found!\n\n"); return 0; }
-		
-	fseek(biosfile, 0L, SEEK_END);
-	file_size = ftell(biosfile);
-	fseek(biosfile, 0L, SEEK_SET);
-	fread(bios_ptr, 1, bios_size, biosfile);	// Read the whole ROM file into RAM.
 
 
-	FILE *cartfile;
-	const char* cart_filename = "pong.gba";
-	cartfile = fopen(cart_filename, "r");
-
-	if (cartfile != NULL) printf("\GBA CART %s loaded OK.\n\n", cart_filename);
-	else { printf("\GBA CART file not found!\n\n"); return 0; }
-
-	fseek(cartfile, 0L, SEEK_END);
-	file_size = ftell(biosfile);
-	fseek(cartfile, 0L, SEEK_SET);
-	fread(cart_ptr, 1, cart_size, cartfile);	// Read the whole ROM file into RAM.
 
 
 	/*
@@ -1164,6 +1137,8 @@ int main(int argc, char** argv, char** env) {
 
 	bool follow_writes = 0;
 	int write_address = 0;
+
+	static bool show_app_console = true;
 	
 	// imgui Main loop stuff...
 	MSG msg;
@@ -1196,6 +1171,44 @@ int main(int argc, char** argv, char** env) {
 		static int counter = 0;
 
 		ImGui::Begin("Virtual Dev Board v1.0");		// Create a window called "Virtual Dev Board v1.0" and append into it.
+
+		ShowExampleAppConsole(&show_app_console);
+
+		if (!bios_rom_loaded) {
+			FILE *biosfile;
+			const char* bios_filename = "gbabios.bin";
+			biosfile = fopen(bios_filename, "r");
+			if (biosfile != NULL) {
+				sprintf(my_string, "\GBA BIOS %s loaded OK.\n\n", bios_filename); AddLog(my_string);
+				fseek(biosfile, 0L, SEEK_END);
+				file_size = ftell(biosfile);
+				fseek(biosfile, 0L, SEEK_SET);
+				fread(bios_ptr, 1, bios_size, biosfile);	// Read the whole ROM file into RAM.
+			}
+			else { 
+				sprintf(my_string, "\GBA BIOS file not found!\n\n");  AddLog(my_string); return 0;
+			}
+			bios_rom_loaded = 1;
+		}
+
+
+		if (!cart_rom_loaded) {
+			FILE *cartfile;
+			const char* cart_filename = "pong.gba";
+			cartfile = fopen(cart_filename, "r");
+			if (cartfile != NULL) {
+				sprintf(my_string, "\GBA CART %s loaded OK.\n\n", cart_filename); AddLog(my_string);
+				fseek(cartfile, 0L, SEEK_END);
+				file_size = ftell(cartfile);
+				fseek(cartfile, 0L, SEEK_SET);
+				fread(cart_ptr, 1, cart_size, cartfile);	// Read the whole ROM file into RAM.
+			}
+			else {
+				sprintf(my_string, "\GBA CART file not found!\n\n"); AddLog(my_string); return 0;
+			}
+			cart_rom_loaded = 1;
+		}
+
 
 		//ImGui::Text("Verilator sim running... ROM_ADDR: 0x%05x", top->ROM_ADDR);               // Display some text (you can use a format strings too)
 																							   //ImGui::Checkbox("Demo Window", &show_demo_window);      // Edit bools storing our window open/close state
@@ -1553,8 +1566,6 @@ int main(int argc, char** argv, char** env) {
 
 		//void ui_m6502_draw(ui_m6502_t* win);
 
-		static bool show_app_console = true;
-		ShowExampleAppConsole(&show_app_console);
 
 		// 3. Show another simple window.
 		/*
